@@ -1,5 +1,7 @@
 # Pi Coding Agent: Quota-aware Thinking
 
+[日本語](README.md)
+
 *This document is an English translation of the Japanese README.*
 
 An unofficial Pi extension that automatically adjusts the thinking level based on the remaining time in the ChatGPT Plus / Codex **5-hour usage window**.

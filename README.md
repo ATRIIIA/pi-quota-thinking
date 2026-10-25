@@ -1,5 +1,7 @@
 # Pi Coding Agent: Quota-aware Thinking
 
+[English](README_EN.md)
+
 ChatGPT Plus / Codex の**5時間利用枠**を、残り時間と比較してthinkingレベルを自動調整する非公式のPi拡張機能です。
 
 Piの`openai-codex`プロバイダーに対応しています。OpenAIとの提携・承認を受けたものではありません。
