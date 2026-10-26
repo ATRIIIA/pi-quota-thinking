@@ -128,6 +128,9 @@ function decide(snapshot: Snapshot): { level: Level; target: number; gap: number
 
 export default function (pi: ExtensionAPI) {
   let enabled = true;
+  let showDeviationWhenOff = true;
+  let applyGeneration = 0;
+  let controlledModelSelection = "";
   let snapshot: Snapshot | null = null;
   let lastAttempt = 0;
   let pending: Promise<Snapshot | null> | null = null;
@@ -168,40 +171,84 @@ export default function (pi: ExtensionAPI) {
   }
 
   async function apply(ctx: any, force = false): Promise<void> {
-    if (!enabled || ctx.model?.provider !== "openai-codex") return;
+    const generation = applyGeneration;
+    if (ctx.model?.provider !== "openai-codex") {
+      if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", undefined);
+      return;
+    }
+    if (!enabled && !showDeviationWhenOff) {
+      if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", "quota thinking: off");
+      return;
+    }
     const usage = await refresh(force);
+    if (generation !== applyGeneration) return;
+    if (ctx.model?.provider !== "openai-codex") {
+      if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", undefined);
+      return;
+    }
+    if (!enabled && !showDeviationWhenOff) {
+      if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", "quota thinking: off");
+      return;
+    }
     if (!usage) {
-      if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", `quota thinking: unavailable`);
+      if (ctx.hasUI) {
+        ctx.ui.setStatus("quota-thinking", enabled ? "quota thinking: unavailable" : "quota thinking: off · unavailable");
+      }
       return; // Fail open: preserve current thinking level.
     }
     const choice = decide(usage);
     const selectedModel = `openai-codex/${choice.modelId}`;
-    if (choice.modelId) {
+    if (enabled && choice.modelId) {
       const targetModel = ctx.modelRegistry.find("openai-codex", choice.modelId);
       if (!targetModel) {
         if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", `quota thinking: model unavailable (${selectedModel})`);
         return;
       }
       if (ctx.model?.provider !== targetModel.provider || ctx.model.id !== targetModel.id) {
+        controlledModelSelection = targetModel.id;
         try {
-          if (!await pi.setModel(targetModel)) {
+          const selected = await pi.setModel(targetModel);
+          if (generation !== applyGeneration) return;
+          if (ctx.model?.provider !== "openai-codex") {
+            if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", undefined);
+            return;
+          }
+          if (!enabled && !showDeviationWhenOff) {
+            if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", "quota thinking: off");
+            return;
+          }
+          if (!selected) {
             if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", `quota thinking: cannot select ${selectedModel}`);
             return;
           }
         } catch (error) {
+          if (generation !== applyGeneration) return;
           const detail = error instanceof Error ? error.message : String(error);
           if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", `quota thinking: model switch failed (${detail})`);
           return;
+        } finally {
+          if (controlledModelSelection === targetModel.id) controlledModelSelection = "";
         }
       }
     }
-    if (pi.getThinkingLevel() !== choice.level) pi.setThinkingLevel(choice.level);
+    if (generation !== applyGeneration) return;
+    if (ctx.model?.provider !== "openai-codex") {
+      if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", undefined);
+      return;
+    }
+    if (!enabled && !showDeviationWhenOff) {
+      if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", "quota thinking: off");
+      return;
+    }
+    if (enabled && pi.getThinkingLevel() !== choice.level) pi.setThinkingLevel(choice.level);
     if (ctx.hasUI) {
       const mm = Math.ceil(Math.max(0, usage.resetAt - Date.now()) / 60_000);
-      const modelLabel = selectedModel ? `${selectedModel} · ` : "";
+      const modelLabel = enabled
+        ? `${selectedModel} · ${pi.getThinkingLevel()}`
+        : `recommended ${selectedModel} · current thinking: ${pi.getThinkingLevel()}`;
       ctx.ui.setStatus(
         "quota-thinking",
-        `5h ${usage.remaining.toFixed(0)}% left / target ${choice.target.toFixed(0)}% · ${mm}m · ${modelLabel}${pi.getThinkingLevel()}`,
+        `${enabled ? "" : "quota thinking: off · "}5h ${usage.remaining.toFixed(0)}% left / target ${choice.target.toFixed(0)}% · deviation ${choice.gap.toFixed(1)} pp · ${mm}m · ${modelLabel}`,
       );
     }
   }
@@ -211,37 +258,73 @@ export default function (pi: ExtensionAPI) {
   // During multi-tool/multi-turn tasks, adjust again between model responses.
   pi.on("turn_end", async (_event, ctx) => { await apply(ctx); });
   pi.on("model_select", async (_event, ctx) => {
+    if (ctx.model?.provider === "openai-codex" && ctx.model.id === controlledModelSelection) {
+      controlledModelSelection = "";
+      return;
+    }
+    applyGeneration++;
     if (ctx.model?.provider !== "openai-codex" && ctx.hasUI) {
       ctx.ui.setStatus("quota-thinking", undefined);
     }
   });
 
   pi.registerCommand("quota-thinking", {
-    description: "Control 5-hour quota-aware thinking: /quota-thinking [status|on|off|refresh]",
+    description: "Control quota-aware thinking: /quota-thinking [status|on|off|refresh|setting [on|off]]",
     getArgumentCompletions: (prefix) => {
       const actions = [
         { value: "status", label: "status", description: "Show quota and thinking status" },
         { value: "on", label: "on", description: "Resume automatic control" },
         { value: "off", label: "off", description: "Pause automatic control" },
         { value: "refresh", label: "refresh", description: "Fetch quota and apply settings" },
+        { value: "setting", label: "setting", description: "Show off-state deviation display setting" },
+        { value: "setting on", label: "setting on", description: "Show quota deviation while off" },
+        { value: "setting off", label: "setting off", description: "Hide quota deviation while off" },
       ];
       const query = prefix.trim().toLowerCase();
       const matches = actions.filter(action => action.value.startsWith(query));
       return matches.length > 0 ? matches : null;
     },
     handler: async (args, ctx) => {
-      const action = (args || "status").trim().toLowerCase();
-      if (action === "off") {
-        enabled = false;
+      const [action = "status", settingValue, ...extra] = (args || "status").trim().toLowerCase().split(/\s+/);
+      if (action === "setting") {
+        if (extra.length > 0 || (settingValue && !["on", "off"].includes(settingValue))) {
+          if (ctx.hasUI) ctx.ui.notify("Usage: /quota-thinking setting [on|off]", "warning");
+          return;
+        }
+        if (settingValue) {
+          const next = settingValue === "on";
+          if (next !== showDeviationWhenOff) {
+            showDeviationWhenOff = next;
+            applyGeneration++;
+          }
+        }
+        if (settingValue && !enabled && ctx.hasUI) await apply(ctx, true);
         if (ctx.hasUI) {
-          ctx.ui.setStatus("quota-thinking", "quota thinking: off");
-          ctx.ui.notify("Quota-aware thinking disabled; current level is unchanged", "info");
+          ctx.ui.notify(
+            `Quota deviation while off: ${showDeviationWhenOff ? "ON" : "OFF"} (runtime only)`,
+            "info",
+          );
         }
         return;
       }
-      if (action === "on") enabled = true;
+      if (settingValue || extra.length > 0) {
+        if (ctx.hasUI) ctx.ui.notify("Usage: /quota-thinking [status|on|off|refresh|setting [on|off]]", "warning");
+        return;
+      }
+      if (action === "off") {
+        enabled = false;
+        applyGeneration++;
+        if (ctx.hasUI) ctx.ui.setStatus("quota-thinking", "quota thinking: off");
+        await apply(ctx, true);
+        if (ctx.hasUI) ctx.ui.notify("Quota-aware thinking disabled; current level is unchanged", "info");
+        return;
+      }
+      if (action === "on") {
+        enabled = true;
+        applyGeneration++;
+      }
       if (!["status", "refresh", "on"].includes(action)) {
-        if (ctx.hasUI) ctx.ui.notify("Usage: /quota-thinking [status|on|off|refresh]", "warning");
+        if (ctx.hasUI) ctx.ui.notify("Usage: /quota-thinking [status|on|off|refresh|setting [on|off]]", "warning");
         return;
       }
       if (action === "on" || action === "refresh") await apply(ctx, true);

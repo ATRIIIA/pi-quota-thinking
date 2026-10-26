@@ -23,6 +23,8 @@ OpenAI Codexの支援を受けて開発しました。
 - `/quota-thinking refresh`: 利用枠を再取得しthinkingを適用
 - `/quota-thinking off`: 自動制御を一時停止（現在のthinkingレベルを維持）
 - `/quota-thinking on`: 自動制御を再開
+- `/quota-thinking setting`: off中の偏差表示設定を確認
+- `/quota-thinking setting on|off`: off中の偏差表示を有効／無効に設定（実行中のみ保持。再読み込み／再起動で初期値onに戻る）
 
 ## 制御ルール
 

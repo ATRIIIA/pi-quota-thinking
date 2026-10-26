@@ -25,6 +25,8 @@ For a project-specific installation, place the file at `.pi/extensions/quota-thi
 - `/quota-thinking refresh`: Retrieve quota data and apply the controller
 - `/quota-thinking off`: Temporarily disable automatic control (the current thinking level is preserved)
 - `/quota-thinking on`: Re-enable automatic control
+- `/quota-thinking setting`: Show whether quota deviation is displayed while off
+- `/quota-thinking setting on|off`: Enable or disable off-state deviation display (runtime-only; resets to on after reload or restart)
 
 ## Control policy
 
