@@ -242,14 +242,12 @@ export default function (pi: ExtensionAPI) {
     }
     if (enabled && pi.getThinkingLevel() !== choice.level) pi.setThinkingLevel(choice.level);
     if (ctx.hasUI) {
-      const mm = Math.ceil(Math.max(0, usage.resetAt - Date.now()) / 60_000);
-      const modelLabel = enabled
-        ? `${selectedModel} · ${pi.getThinkingLevel()}`
-        : `recommended ${selectedModel} · current thinking: ${pi.getThinkingLevel()}`;
-      ctx.ui.setStatus(
-        "quota-thinking",
-        `${enabled ? "" : "quota thinking: off · "}5h ${usage.remaining.toFixed(0)}% left / target ${choice.target.toFixed(0)}% · deviation ${choice.gap.toFixed(1)} pp · ${mm}m · ${modelLabel}`,
-      );
+      if (!enabled) {
+        const sign = choice.gap >= 0 ? "+" : "";
+        ctx.ui.setStatus("quota-thinking", `quota thinking: off · ${sign}${choice.gap.toFixed(1)} pp`);
+        return;
+      }
+      ctx.ui.setStatus("quota-thinking", `${choice.gap.toFixed(1)} pp`);
     }
   }
 
